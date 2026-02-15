@@ -48,6 +48,24 @@
   "Serve the web UI"
   (file-response "resources/index.html" "text/html; charset=utf-8"))
 
+(defn js-handler [req]
+  "Serve JavaScript files"
+  (let [filename (some-> (:uri req)
+                         (str/split #"/")
+                         last)]
+    (if filename
+      (file-response (str "resources/js/" filename) "application/javascript")
+      {:status 404 :body "Not found"})))
+
+(defn css-handler [req]
+  "Serve CSS files"
+  (let [filename (some-> (:uri req)
+                         (str/split #"/")
+                         last)]
+    (if filename
+      (file-response (str "resources/css/" filename) "text/css")
+      {:status 404 :body "Not found"})))
+
 (defn api-root-handler [req]
   "API root endpoint (for API documentation)"
   (json-response {:name "MBLogic-CLJ"
@@ -167,6 +185,14 @@
       ;; Web UI
       (and (= method :get) (= path "/"))
       (index-handler req)
+
+      ;; Static files - JavaScript
+      (and (= method :get) (str/starts-with? path "/js/"))
+      (js-handler req)
+
+      ;; Static files - CSS
+      (and (= method :get) (str/starts-with? path "/css/"))
+      (css-handler req)
 
       ;; Health check
       (and (= method :get) (= path "/health"))
