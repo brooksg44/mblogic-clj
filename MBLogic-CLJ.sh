@@ -17,41 +17,6 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Default port
-PORT=8080
-COMMAND="server"
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --help|-h)
-      show_help
-      exit 0
-      ;;
-    test)
-      COMMAND="test"
-      shift
-      ;;
-    repl)
-      COMMAND="repl"
-      shift
-      ;;
-    server)
-      COMMAND="server"
-      shift
-      ;;
-    *)
-      echo -e "${RED}Unknown option: $1${NC}"
-      show_help
-      exit 1
-      ;;
-  esac
-done
-
 show_help() {
   cat << 'EOF'
 MBLogic-CLJ - Industrial PLC Compiler/Interpreter
@@ -144,6 +109,41 @@ start_repl() {
 
   lein repl
 }
+
+# Default values
+PORT=8080
+COMMAND="server"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --port)
+      PORT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    test)
+      COMMAND="test"
+      shift
+      ;;
+    repl)
+      COMMAND="repl"
+      shift
+      ;;
+    server)
+      COMMAND="server"
+      shift
+      ;;
+    *)
+      echo -e "${RED}Unknown option: $1${NC}"
+      show_help
+      exit 1
+      ;;
+  esac
+done
 
 # Main execution
 case $COMMAND in
