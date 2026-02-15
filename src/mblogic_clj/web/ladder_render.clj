@@ -597,8 +597,13 @@
           (->LadderRung
             (:number network)
             (concat input-cells @output-cells)
-            (max current-matrix-height (count @output-cells) 1)
-            current-matrix-width
+            (let [all-cells (concat input-cells @output-cells)
+                  max-col (if (empty? all-cells) 0 (apply max (map :col all-cells)))
+                  rung-cols (max (inc max-col) current-matrix-width 1)]
+              (max current-matrix-height (count @output-cells) 1))
+            (let [all-cells (concat input-cells @output-cells)
+                  max-col (if (empty? all-cells) 0 (apply max (map :col all-cells)))]
+              (max (inc max-col) current-matrix-width 1))
             (sort @all-addresses)
             (first (:comments network)) ; Get comment if available
             false ; il-fallback
