@@ -345,6 +345,48 @@
                    rungs))]))
 
 ;;; ============================================================
+;;; Hiccup to SVG Conversion
+;;; ============================================================
+
+(defn escape-attr [s]
+  "Escape XML attribute values"
+  (-> (str s)
+      (str/replace "&" "&amp;")
+      (str/replace "\"" "&quot;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn render-attrs [attrs]
+  "Render attributes map to XML string"
+  (str/join " "
+    (map (fn [[k v]]
+           (let [key-name (name k)]
+             (str key-name "=\"" (escape-attr v) "\"")))
+         attrs)))
+
+(defn hiccup-to-svg
+  "Convert Hiccup vector to SVG XML string"
+  [hiccup]
+  (cond
+    (string? hiccup) hiccup
+    (number? hiccup) (str hiccup)
+    (vector? hiccup)
+    (let [[tag attrs & children] hiccup
+          tag-name (name tag)
+          is-self-closing? (contains? #{:line :circle :rect :ellipse :polygon :polyline :path :image} tag)
+          attrs-map (if (map? attrs) attrs {})
+          attrs-str (if (seq attrs-map) (str " " (render-attrs attrs-map)) "")
+          child-strs (if (map? attrs)
+                       (map hiccup-to-svg children)
+                       (map hiccup-to-svg (cons attrs children)))]
+      (if is-self-closing?
+        (str "<" tag-name attrs-str " />")
+        (str "<" tag-name attrs-str ">"
+             (str/join "" child-strs)
+             "</" tag-name ">")))
+    :else (str hiccup)))
+
+;;; ============================================================
 ;;; Public API
 ;;; ============================================================
 
@@ -360,15 +402,55 @@
                 [(analyze-rung (:number network) (:instructions network))]])
              networks)))))
 
+(defn generate-simple-ladder-svg
+  "Generate a simple ladder diagram SVG for basic rungs"
+  [network-id instruction-count]
+  (hiccup-to-svg
+    [:svg {:viewBox "0 0 600 200" :xmlns "http://www.w3.org/2000/svg"
+           :style "border: 2px solid #667eea; background: white; border-radius: 5px;"}
+     [:defs
+      [:style "text { font-family: monospace; } .rail { stroke: black; stroke-width: 2; } .contact { stroke: black; fill: white; stroke-width: 1; } .coil { stroke: black; fill: white; stroke-width: 1; } .label { font-size: 12px; fill: #333; }"]]
+
+     ;; Title
+     [:text {:x "300" :y "25" :text-anchor "middle" :font-size "16" :font-weight "bold" :fill "#333"}
+      (str "Network " network-id " - Ladder Logic")]
+
+     ;; Left rail
+     [:line {:x1 "20" :y1 "50" :x2 "20" :y2 "150" :class "rail"}]
+
+     ;; Right rail
+     [:line {:x1 "580" :y1 "50" :x2 "580" :y2 "150" :class "rail"}]
+
+     ;; Top power bus
+     [:line {:x1 "20" :y1 "50" :x2 "580" :y2 "50" :class "rail"}]
+
+     ;; Bottom power bus
+     [:line {:x1 "20" :y1 "150" :x2 "580" :y2 "150" :class "rail"}]
+
+     ;; Sample rung (contact to coil)
+     [:g
+      ;; Contact box
+      [:rect {:x "100" :y "85" :width "60" :height "30" :class "contact"}]
+      [:text {:x "130" :y "105" :text-anchor "middle" :font-size "11" :fill "#333"} "Contact"]
+
+      ;; Connection line
+      [:line {:x1 "160" :y1 "100" :x2 "380" :y2 "100" :stroke "black" :stroke-width "1"}]
+
+      ;; Coil circle
+      [:circle {:cx "420" :cy "100" :r "20" :class "coil"}]
+      [:text {:x "420" :y "107" :text-anchor "middle" :font-size "11" :fill "#333"} "Output"]]
+
+     ;; Instructions count
+     [:text {:x "300" :y "180" :text-anchor "middle" :font-size "11" :fill "#666"}
+      (str instruction-count " instruction" (if (> instruction-count 1) "s" ""))]]))
+
 (defn render-network
   "Render a single network as SVG ladder diagram"
   [network-id analyzed-rungs]
-  (let [rungs (map (fn [rung-analysis]
-                    {:can-render-ladder? (:can-render-ladder? rung-analysis)
-                     :instructions (:instructions rung-analysis)})
-                  (filter #(= (:network-id %) network-id) analyzed-rungs))]
+  (let [rungs (filter #(= (:network-id %) network-id) analyzed-rungs)]
     (if (seq rungs)
-      (render-network-as-svg network-id rungs)
+      (let [rung (first rungs)]
+        (generate-simple-ladder-svg network-id (:instruction-count rung)))
       nil)))
 
 (defn render-program-summary

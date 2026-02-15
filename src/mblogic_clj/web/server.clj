@@ -105,7 +105,7 @@
                           :network-id network-id
                           :can-render-ladder? can-render?
                           :instruction-count (reduce + 0 (map :instruction-count rung-analyses))
-                          :svg-data (when rendered (str rendered))}))
+                          :svg rendered}))
         (json-response {:error "Network not found"} 404)))
     (json-response {:error "No program loaded"} 400)))
 
