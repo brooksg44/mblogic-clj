@@ -334,13 +334,27 @@
     (apply max (map count matrix))))
 
 (defn append-cell-to-matrix
-  "Append a cell to the current row of the matrix"
+  "Append a cell to the current row of the matrix.
+   Pads earlier rows to match the new row length for matrix consistency."
   [cell matrix]
   (if (empty? matrix)
     [[cell]]
     (let [current-row (last matrix)
-          new-row (conj current-row cell)]
-      (conj (vec (butlast matrix)) new-row))))
+          new-row (conj current-row cell)
+          new-width (count new-row)
+          max-previous-width (if (= (count matrix) 1)
+                               0
+                               (apply max (map count (butlast matrix))))]
+      ; If other rows are shorter than the new row, pad them
+      (if (> new-width (inc max-previous-width))
+        ; Need to pad earlier rows
+        (let [padded-matrix (vec (map (fn [row]
+                                        (if (< (count row) new-width)
+                                          (vec (concat row (repeat (- new-width (count row)) nil)))
+                                          (vec row)))
+                                      (butlast matrix)))]
+          (conj padded-matrix (vec new-row)))
+        (conj (vec (butlast matrix)) (vec new-row))))))
 
 (defn merge-matrix-below
   "Merge lower matrix below upper matrix (for OR branches)
@@ -359,14 +373,15 @@
               (concat row (repeat (- max-width row-len) nil))
               row)))
 
-        padded-upper (map pad-row upper)
-        padded-lower (map pad-row lower)]
+        padded-upper (mapv (fn [row] (vec (pad-row row))) upper)
+        padded-lower (mapv (fn [row] (vec (pad-row row))) lower)
+        result (cond
+                 (zero? upper-height) padded-lower
+                 (zero? lower-height) padded-upper
+                 :else
+                 (vec (concat padded-upper padded-lower)))]
 
-    (cond
-      (zero? upper-height) padded-lower
-      (zero? lower-height) padded-upper
-      :else
-      (concat padded-upper padded-lower))))
+    result))
 
 (defn merge-matrix-right
   "Merge right matrix with left side connectors (for ANDSTR)"
@@ -410,6 +425,23 @@
       ; Default: create empty cell
       :else
       (make-ladder-cell :type :empty :row row :col 0))))
+
+;;; ============================================================
+;;; Matrix Rectification (ensure all rows same width)
+;;; ============================================================
+
+(defn rectify-matrix
+  "Ensure all rows in matrix have the same width by padding with nil"
+  [matrix]
+  (if (empty? matrix)
+    matrix
+    (let [max-width (matrix-width matrix)]
+      (mapv (fn [row]
+              (let [row-len (count row)]
+                (if (< row-len max-width)
+                  (vec (concat row (repeat (- max-width row-len) nil)))
+                  (vec row))))
+            matrix))))
 
 ;;; ============================================================
 ;;; Network to Ladder Rung Conversion (CORE ALGORITHM)
@@ -554,9 +586,11 @@
             (println "WARNING: Invalid IL program structure: matrix stack has" stack-len "entries")))
 
         ; Convert matrix to flat cell list with correct row/col positions
-        (let [input-cells (flatten-matrix-to-cells @current-matrix)
-              current-matrix-height (matrix-height @current-matrix)
-              current-matrix-width (matrix-width @current-matrix)
+        (let [; Rectify matrix to ensure all rows have same width
+              rectified-matrix (rectify-matrix @current-matrix)
+              input-cells (flatten-matrix-to-cells rectified-matrix)
+              current-matrix-height (matrix-height rectified-matrix)
+              current-matrix-width (matrix-width rectified-matrix)
 
               ; Process output instructions
               ; First pass: collect all output cells with sequential row numbers
