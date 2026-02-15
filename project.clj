@@ -18,7 +18,8 @@
                  ;; Utilities
                  [org.clojure/core.async "1.6.673"]]
 
-  :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]]
+  :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]
+                                  [org.clojure/clojurescript "1.10.866"]]
                    :plugins [[lein-cljsbuild "1.1.8"]]}
              :test {:resource-paths ["resources" "test-resources"]}
              :uberjar {:aot :all
