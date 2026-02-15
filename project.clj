@@ -14,16 +14,12 @@
                  ;; JSON encoding/decoding
                  [cheshire "5.11.0"]
                  ;; Logging
-                 [com.fzakaria/slf4j-timbre "0.3.471"]
                  [com.taoensso/timbre "6.1.0"]
                  ;; Utilities
-                 [org.clojure/tools.logging "1.2.4"]
                  [org.clojure/core.async "1.6.673"]]
 
-  :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]
-                                  [clojure-test-fixtures "1.0.5"]]
-                   :plugins [[lein-shadow "0.4.7"]
-                             [lein-cljsbuild "1.1.8"]]}
+  :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]]
+                   :plugins [[lein-cljsbuild "1.1.8"]]}
              :test {:resource-paths ["resources" "test-resources"]}
              :uberjar {:aot :all
                        :main mblogic-clj.core}}
