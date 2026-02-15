@@ -794,23 +794,29 @@
               :else
               (reset! current-matrix (append-cell-to-matrix cell @current-matrix)))))
 
-        ; Handle multi-row rungs (double/triple) vs single-row rungs
+        ; Handle multi-row rungs (double/triple) vs single-row rungs.
+        ; Stack grows with conj (adds to end), so peek = most recently pushed.
+        ; Matches CL: (nth 0 matrix-stack) = most recent = (peek stack) in Clojure.
         (let [stack-len (count @matrix-stack)]
           (cond
             ; Single-row rung: stack should have exactly 1 entry (initial empty matrix)
             (= stack-len 1)
             nil ; Nothing to do - current-matrix already contains the result
 
-            ; Double rung (2 parallel inputs): stack has 2 entries
+            ; Double rung (2 logic inputs, e.g. CNTU needs clock + reset):
+            ; stack = [[[]] [[row0-cells]]], current = [[row1-cells]]
+            ; Take most-recently-pushed (peek) as row0, append current as row1.
             (= stack-len 2)
-            (let [last-matrix (first @matrix-stack)]
-              (reset! current-matrix (vec (concat last-matrix @current-matrix))))
+            (let [row0-matrix (peek @matrix-stack)]  ; most recently pushed
+              (reset! current-matrix (vec (concat row0-matrix @current-matrix))))
 
-            ; Triple rung (3 parallel inputs): stack has 3 entries
+            ; Triple rung (3 logic inputs, e.g. UDC needs count-up, count-down, reset):
+            ; stack = [[[]] [[row0]] [[row1]]], current = [[row2]]
+            ; (nth stack 1) = row0, (peek stack) = row1
             (= stack-len 3)
-            (let [x2-matrix (first @matrix-stack)
-                  x1-matrix (second @matrix-stack)]
-              (reset! current-matrix (vec (concat x1-matrix x2-matrix @current-matrix))))
+            (let [row0-matrix (nth @matrix-stack 1)  ; second-most-recently pushed
+                  row1-matrix (peek @matrix-stack)]   ; most recently pushed
+              (reset! current-matrix (vec (concat row0-matrix row1-matrix @current-matrix))))
 
             ; Any other stack size is invalid
             :else
@@ -830,12 +836,13 @@
             (let [opcode (:opcode instr)
                   params (:params instr)]
               (cond
-                ; Coil with potentially multiple addresses
+                ; Coil with potentially multiple addresses.
+                ; Output col = current-matrix-width (after all input columns).
                 (coil-instruction? opcode)
                 (let [is-range (> (count params) 1)]
                   (doseq [addr params]
                     (when (string? addr) ; Check if valid address
-                      (let [cell (make-coil-cell opcode addr 1 @output-row is-range)]
+                      (let [cell (make-coil-cell opcode addr current-matrix-width @output-row is-range)]
                         (swap! output-cells conj cell)
                         (swap! all-addresses conj addr)
                         (swap! output-row inc)))))
@@ -853,7 +860,7 @@
                              :opcode opcode
                              :params params
                              :row @output-row
-                             :col 1
+                             :col current-matrix-width
                              :monitor-type :bool)]
                   (swap! output-cells conj cell)
                   ; Track all PLC addresses
@@ -866,7 +873,7 @@
                 :else
                 (let [cell (assoc (instruction-to-cell instr 0)
                              :row @output-row
-                             :col 1)]
+                             :col current-matrix-width)]
                   (swap! output-cells conj cell)
                   (doseq [addr (:addresses cell)]
                     (swap! all-addresses conj addr))
