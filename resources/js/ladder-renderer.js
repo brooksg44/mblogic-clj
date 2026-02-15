@@ -11,16 +11,16 @@
 // ==============================================================================
 
 const LADDER = {
-  // Symbol dimensions
-  SYMBOL_WIDTH: 75,
-  SYMBOL_HEIGHT: 70,
+  // Symbol dimensions (increased for readability)
+  SYMBOL_WIDTH: 120,
+  SYMBOL_HEIGHT: 100,
 
   // Spacing and margins
-  CELL_PADDING: 2,
-  TOP_MARGIN: 20,
-  BOTTOM_MARGIN: 20,
-  LEFT_MARGIN: 40,
-  RIGHT_MARGIN: 40,
+  CELL_PADDING: 4,
+  TOP_MARGIN: 30,
+  BOTTOM_MARGIN: 30,
+  LEFT_MARGIN: 60,
+  RIGHT_MARGIN: 60,
 
   // Power rails
   POWER_RAIL_X_LEFT: 10,
@@ -28,11 +28,11 @@ const LADDER = {
   POWER_RAIL_COLOR: '#000',
 
   // Drawing styles
-  STROKE_WIDTH: 1,
+  STROKE_WIDTH: 2,
   STROKE_COLOR: '#000',
   FILL_COLOR: 'white',
   TEXT_COLOR: '#333',
-  TEXT_SIZE: '10px',
+  TEXT_SIZE: '14px',
   TEXT_FAMILY: 'monospace'
 };
 
@@ -225,7 +225,7 @@ function createCoil(type = 'out') {
   };
 
   if (labels[type]) {
-    g.appendChild(createText(labels[type], 37.5, 4, '9px'));
+    g.appendChild(createText(labels[type], 37.5, 4, '13px'));
   }
 
   g.dataset.symbol = type;
@@ -256,7 +256,7 @@ function createComparison(compType = 'eq') {
   };
 
   const op = ops[compType] || '?';
-  g.appendChild(createText(op, 37.5, 4, '11px'));
+  g.appendChild(createText(op, 37.5, 4, '16px'));
 
   g.dataset.symbol = compType;
   return g;
@@ -351,13 +351,13 @@ function createBlockInstruction(blockType, addresses = []) {
   };
 
   const label = labels[blockType] || blockType.toUpperCase();
-  g.appendChild(createText(label, blockWidth / 2, 0, '11px'));
+  g.appendChild(createText(label, blockWidth / 2, 0, '16px'));
 
   // Addresses (stacked below label)
   if (addresses && addresses.length > 0) {
     const addrStartY = 10;
     addresses.slice(0, 3).forEach((addr, idx) => {
-      g.appendChild(createText(addr, blockWidth / 2, addrStartY + (idx * 10), '8px'));
+      g.appendChild(createText(addr, blockWidth / 2, addrStartY + (idx * 10), '12px'));
     });
   }
 
@@ -502,7 +502,7 @@ function createAddressLabel(address, x, y, labelType = 'default') {
       offsetY = y + 5;
   }
 
-  return createText(address, x, offsetY, '9px');
+  return createText(address, x, offsetY, '13px');
 }
 
 // ==============================================================================

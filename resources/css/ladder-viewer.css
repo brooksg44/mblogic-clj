@@ -8,18 +8,23 @@
   background: white;
   border-radius: 5px;
   padding: 20px;
-  overflow-x: auto;
+  overflow: auto;
   margin: 15px 0;
+  min-height: 400px;
 }
 
 /* SVG Element Styling */
 .ladder-svg {
-  max-width: 100%;
+  min-width: 100%;
+  width: auto;
   height: auto;
   display: block;
   background: white;
   border: 1px solid #ddd;
   border-radius: 3px;
+  transform: scale(2);
+  transform-origin: top left;
+  margin-bottom: 400px;
 }
 
 /* Prevent text selection on SVG text elements */

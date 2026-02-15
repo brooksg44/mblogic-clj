@@ -402,6 +402,13 @@
                 </div>
 
                 <div class="network-nav">
+                    <h3>Subroutine</h3>
+                    <select id="subroutineSelector" onchange="selectSubroutine()" style="width: 100%; padding: 8px; margin-bottom: 15px; border-radius: 5px; border: 1px solid #ddd;">
+                        <option value="">-- Select Subroutine --</option>
+                    </select>
+                </div>
+
+                <div class="network-nav">
                     <h3>Networks</h3>
                     <div class="network-buttons" id="networkButtons"></div>
                 </div>
@@ -446,7 +453,9 @@
     <script>
         // State
         let currentNetwork = null;
+        let currentSubroutine = 'main';
         let programData = null;
+        let subroutineData = {};
         let networkData = {};
 
         // Message system
@@ -508,10 +517,79 @@
                 document.getElementById('progressFill').style.width = percentage + '%';
                 document.getElementById('progressText').textContent = percentage + '%';
 
-                // Generate network buttons
-                generateNetworkButtons(data['main-networks']);
+                // Load subroutines
+                await loadSubroutines();
+
+                // Select 'main' by default
+                currentSubroutine = 'main';
+                document.getElementById('subroutineSelector').value = 'main';
+
+                // Generate network buttons for main
+                await selectSubroutine();
             } catch (error) {
                 showMessage('❌ Failed to refresh: ' + error.message, 'error');
+            }
+        }
+
+        // Load available subroutines
+        async function loadSubroutines() {
+            try {
+                const response = await fetch('/api/subroutines');
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.subroutines) {
+                    const selector = document.getElementById('subroutineSelector');
+                    selector.innerHTML = '<option value="">-- Select Subroutine --</option>';
+
+                    data.subroutines.forEach(subrName => {
+                        const option = document.createElement('option');
+                        option.value = subrName;
+                        option.textContent = subrName.charAt(0).toUpperCase() + subrName.slice(1);
+                        selector.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load subroutines:', error);
+            }
+        }
+
+        // Select a subroutine and load its networks
+        async function selectSubroutine() {
+            const subrName = document.getElementById('subroutineSelector').value;
+            if (!subrName) {
+                showMessage('Please select a subroutine', 'warning');
+                return;
+            }
+
+            currentSubroutine = subrName;
+            currentNetwork = null;
+
+            try {
+                // Fetch ladder data for this subroutine
+                const response = await fetch(`/api/ladder-js?subrname=${subrName}`);
+                const data = await response.json();
+
+                if (data.status !== 'ok' || !data.data) {
+                    showMessage(`No ladder data for ${subrName}`, 'warning');
+                    return;
+                }
+
+                subroutineData[subrName] = data.data;
+                const rungCount = data.data['total-rungs'] || 0;
+
+                // Update sidebar
+                document.getElementById('totalNetworks').textContent = rungCount;
+                document.getElementById('ladderRungs').textContent = rungCount;
+
+                // Generate network buttons for this subroutine
+                generateNetworkButtons(rungCount);
+
+                // Select first network
+                if (rungCount > 0) {
+                    selectNetwork(1);
+                }
+            } catch (error) {
+                showMessage(`Failed to load ${subrName}: ${error.message}`, 'error');
             }
         }
 
@@ -519,25 +597,25 @@
         function generateNetworkButtons(count) {
             const container = document.getElementById('networkButtons');
             container.innerHTML = '';
-            
+
             for (let i = 1; i <= count; i++) {
                 const btn = document.createElement('button');
                 btn.className = 'network-btn';
-                btn.textContent = `Network ${i}`;
+                btn.textContent = `Rung ${i}`;
                 btn.onclick = () => selectNetwork(i);
                 container.appendChild(btn);
             }
         }
 
         // Select network and load its diagram
-        async function selectNetwork(networkId) {
-            currentNetwork = networkId;
+        async function selectNetwork(rungId) {
+            currentNetwork = rungId;
 
             // Update button states
             const buttons = document.querySelectorAll('.network-btn');
             if (buttons && buttons.length > 0) {
                 buttons.forEach((btn, idx) => {
-                    if (idx + 1 === networkId) {
+                    if (idx + 1 === rungId) {
                         btn.classList.add('active');
                     } else {
                         btn.classList.remove('active');
@@ -546,39 +624,37 @@
             }
 
             // Show loading
-            document.getElementById('canvas').innerHTML = '<div class="loading"><div class="spinner"></div>Loading network...</div>';
-            document.getElementById('networkLabel').textContent = `Network ${networkId}`;
+            document.getElementById('canvas').innerHTML = '<div class="loading"><div class="spinner"></div>Rendering diagram...</div>';
+            document.getElementById('networkLabel').textContent = `${currentSubroutine} - Rung ${rungId}`;
 
             try {
-                const response = await fetch('/api/ladder-js?subrname=main');
-                const data = await response.json();
+                // Get the rung data from already-loaded subroutine data
+                const ladderData = subroutineData[currentSubroutine];
 
-                if (data.error || data.status !== 'ok') {
+                if (!ladderData) {
                     document.getElementById('canvas').innerHTML =
-                        `<div class="message error">Error: ${data.error || 'Failed to load ladder'}</div>`;
+                        `<div class="message error">Error: Subroutine data not loaded</div>`;
                     return;
                 }
 
-                const ladderData = data.data;
-                // Get the specific rung for this network
-                const rung = ladderData.subrdata && ladderData.subrdata[networkId - 1];
+                const rung = ladderData.subrdata && ladderData.subrdata[rungId - 1];
 
                 if (!rung) {
                     document.getElementById('canvas').innerHTML =
-                        `<div class="message error">Network ${networkId} not found</div>`;
+                        `<div class="message error">Rung ${rungId} not found</div>`;
                     return;
                 }
 
-                networkData[networkId] = rung;
+                networkData[rungId] = rung;
 
                 // Update canvas info
                 document.getElementById('renderType').innerHTML = '<span class="badge badge-ladder">Ladder Logic</span>';
 
                 // Render diagram
-                renderRung(rung, networkId);
+                renderRung(rung, rungId);
 
                 // Update button styles
-                const btn = buttons && buttons[networkId - 1];
+                const btn = buttons && buttons[rungId - 1];
                 if (btn) {
                     btn.classList.remove('ladder', 'il');
                     btn.classList.add('ladder');
@@ -586,7 +662,7 @@
 
             } catch (error) {
                 document.getElementById('canvas').innerHTML =
-                    `<div class="message error">Failed to load network: ${error.message}</div>`;
+                    `<div class="message error">Failed to load rung: ${error.message}</div>`;
             }
         }
 
