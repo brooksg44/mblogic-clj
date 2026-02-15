@@ -5,6 +5,7 @@
             [cheshire.core :as json]
             [clojure.tools.logging :as log]
             [clojure.string :as str]
+            [clojure.java.io :as io]
             [mblogic-clj.parser :as parser]
             [mblogic-clj.ladder-renderer :as ladder]))
 
@@ -27,12 +28,27 @@
    :headers {"Content-Type" "application/json"}
    :body (json/generate-string data)})
 
+(defn file-response [filepath content-type]
+  "Serve a file with the specified content type"
+  (let [file (io/file filepath)]
+    (if (.exists file)
+      {:status 200
+       :headers {"Content-Type" content-type}
+       :body file}
+      {:status 404
+       :headers {"Content-Type" "text/plain"}
+       :body "File not found"})))
+
 (defn health-handler [req]
   "Simple health check endpoint"
   (json-response {:status "ok" :message "MBLogic-CLJ Server Running"}))
 
-(defn root-handler [req]
-  "Root endpoint"
+(defn index-handler [req]
+  "Serve the web UI"
+  (file-response "resources/index.html" "text/html; charset=utf-8"))
+
+(defn api-root-handler [req]
+  "API root endpoint (for API documentation)"
   (json-response {:name "MBLogic-CLJ"
                   :version "1.0"
                   :description "PLC Compiler/Interpreter"
@@ -102,8 +118,14 @@
   (let [method (:request-method req)
         path (:uri req)]
     (case [method path]
-      [:get "/"] (root-handler req)
+      ;; Web UI
+      [:get "/"] (index-handler req)
+
+      ;; Health check
       [:get "/health"] (health-handler req)
+
+      ;; API endpoints
+      [:get "/api"] (api-root-handler req)
       [:post "/api/load-program"] (load-program-handler req)
       [:get "/api/program-summary"] (program-summary-handler req)
 
