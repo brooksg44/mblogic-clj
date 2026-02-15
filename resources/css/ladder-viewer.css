@@ -22,9 +22,6 @@
   background: white;
   border: 1px solid #ddd;
   border-radius: 3px;
-  transform: scale(2);
-  transform-origin: top left;
-  margin-bottom: 400px;
 }
 
 /* Prevent text selection on SVG text elements */

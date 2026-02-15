@@ -343,15 +343,30 @@
       (conj (vec (butlast matrix)) new-row))))
 
 (defn merge-matrix-below
-  "Merge lower matrix below upper matrix (for OR branches)"
+  "Merge lower matrix below upper matrix (for OR branches)
+   Ensures rows are padded to same width with nil values"
   [upper lower]
   (let [upper-height (matrix-height upper)
-        lower-height (matrix-height lower)]
+        lower-height (matrix-height lower)
+        upper-width (matrix-width upper)
+        lower-width (matrix-width lower)
+        max-width (max upper-width lower-width)
+
+        ; Pad rows to max width
+        pad-row (fn [row]
+          (let [row-len (count row)]
+            (if (< row-len max-width)
+              (concat row (repeat (- max-width row-len) nil))
+              row)))
+
+        padded-upper (map pad-row upper)
+        padded-lower (map pad-row lower)]
+
     (cond
-      (zero? upper-height) lower
-      (zero? lower-height) upper
+      (zero? upper-height) padded-lower
+      (zero? lower-height) padded-upper
       :else
-      (concat upper lower))))
+      (concat padded-upper padded-lower))))
 
 (defn merge-matrix-right
   "Merge right matrix with left side connectors (for ANDSTR)"
