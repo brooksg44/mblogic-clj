@@ -192,20 +192,17 @@
         main-fn (:main-fn program)
         subroutines (:subroutines program)]
 
+    ;; Increment scan counter first
+    (swap! (:scan-count interp) inc)
+
     ;; Update system bits at start of scan
     (update-system-bits interp)
 
     ;; Execute the main program
     (try
-      (let [ctx {:data-table dt
-                 :logic-stack (:logic-stack program)
-                 :stacktop (:stacktop program)
-                 :subroutines subroutines
-                 :for-loop-state (:for-loop-state program)
-                 :interp interp}]
-        ;; Call main function
-        (when main-fn
-          (main-fn ctx)))
+      ;; Call main function with data table
+      (when main-fn
+        (main-fn dt))
 
       (catch Exception e
         ;; Handle runtime error
@@ -218,9 +215,6 @@
       ;; Update scan time and statistics
       (reset! (:scan-time interp) scan-time-ms)
       (swap! (:statistics interp) update-statistics scan-time-ms)
-
-      ;; Increment scan counter
-      (swap! (:scan-count interp) inc)
 
       ;; Finalize system bits
       (finalize-system-bits interp)

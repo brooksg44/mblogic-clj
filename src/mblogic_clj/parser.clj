@@ -154,7 +154,7 @@
               :else
               (do
                 (.append current-token c)
-                (recur (inc i) len tokens current-token in-quotes paren-depth)))))))
+                (recur (inc i) len tokens current-token in-quotes paren-depth)))))))))
 
 (defn parse-math-expression
   "Combine tokens after MATHDEC/MATHHEX into expression string"
@@ -193,59 +193,56 @@
 ;;; IL Parser State and Methods
 ;;; ============================================================
 
-(defrecord ILParser
-  [^:unsynchronized-mutable lines
-   ^:unsynchronized-mutable current-line
-   ^:unsynchronized-mutable errors
-   ^:unsynchronized-mutable warnings
-   ^:unsynchronized-mutable pending-comments])
-
 (defn make-il-parser
   "Create a new IL parser"
   [source]
   (let [lines (split-into-lines source)]
-    (ILParser. lines 0 [] [] [])))
+    {:lines lines
+     :current-line (atom 0)
+     :errors (atom [])
+     :warnings (atom [])
+     :pending-comments (atom [])}))
 
 (defn peek-line
   "Look at current line without advancing"
-  [^ILParser parser]
-  (let [idx (.current-line parser)]
-    (when (< idx (count (.lines parser)))
-      (nth (.lines parser) idx))))
+  [parser]
+  (let [idx @(:current-line parser)]
+    (when (< idx (count (:lines parser)))
+      (nth (:lines parser) idx))))
 
 (defn next-line
   "Get current line and advance"
-  [^ILParser parser]
+  [parser]
   (let [line (peek-line parser)]
     (when line
-      (set! (.current-line parser) (inc (.current-line parser))))
+      (swap! (:current-line parser) inc))
     line))
 
 (defn current-line-number
   "Get 1-based current line number"
-  [^ILParser parser]
-  (inc (.current-line parser)))
+  [parser]
+  (inc @(:current-line parser)))
 
 (defn add-error
   "Add a parse error"
-  [^ILParser parser message & {:keys [line-text]}]
-  (set! (.errors parser)
-        (conj (.errors parser)
-              (parse-error message
-                          :line-number (current-line-number parser)
-                          :line-text line-text))))
+  [parser message & {:keys [line-text]}]
+  (swap! (:errors parser)
+         conj
+         (parse-error message
+                      :line-number (current-line-number parser)
+                      :line-text line-text)))
 
 (defn add-warning
   "Add a parse warning"
-  [^ILParser parser message]
-  (set! (.warnings parser)
-        (conj (.warnings parser)
-              {:line-number (current-line-number parser)
-               :message message})))
+  [parser message]
+  (swap! (:warnings parser)
+         conj
+         {:line-number (current-line-number parser)
+          :message message}))
 
 (defn collect-comments
   "Collect consecutive comment lines"
-  [^ILParser parser]
+  [parser]
   (loop [comments []]
     (if (and (peek-line parser) (comment-line? (peek-line parser)))
       (let [comment (extract-comment (next-line parser))]
@@ -254,7 +251,7 @@
 
 (defn skip-blank-lines
   "Skip blank lines"
-  [^ILParser parser]
+  [parser]
   (while (and (peek-line parser) (blank-line? (peek-line parser)))
     (next-line parser)))
 
@@ -264,16 +261,16 @@
 
 (defn parse-network
   "Parse a network's instructions until next NETWORK, SBR, or end"
-  [^ILParser parser network-number]
-  (let [initial-comments (vec (.pending-comments parser))]
-    (set! (.pending-comments parser) [])
+  [parser network-number]
+  (let [initial-comments (vec @(:pending-comments parser))]
+    (reset! (:pending-comments parser) [])
 
     (loop [instructions []]
       (skip-blank-lines parser)
 
       (if-not (peek-line parser)
         ;; End of input
-        (ParsedNetwork. network-number (vec (reverse instructions)) initial-comments)
+        (ParsedNetwork. network-number (vec instructions) initial-comments)
 
         (let [line (peek-line parser)
               trimmed (trim-whitespace line)]
@@ -282,8 +279,9 @@
             ;; Comment line
             (comment-line? line)
             (let [comment (extract-comment (next-line parser))]
-              (set! (.pending-comments parser)
-                    (conj (.pending-comments parser) comment))
+              (swap! (:pending-comments parser)
+                     conj
+                     comment)
               (recur instructions))
 
             ;; Blank line
@@ -295,7 +293,7 @@
             ;; NETWORK or SBR - end current network
             (or (re-matches #"(?i)^NETWORK\s.*" trimmed)
                 (re-matches #"(?i)^SBR\s.*" trimmed))
-            (ParsedNetwork. network-number (vec (reverse instructions)) initial-comments)
+            (ParsedNetwork. network-number (vec instructions) initial-comments)
 
             ;; Instruction line
             :else
@@ -317,11 +315,11 @@
 
                 ;; Valid instruction
                 :else
-                (let [parsed' (if (seq (.pending-comments parser))
+                (let [parsed' (if (seq @(:pending-comments parser))
                                (assoc parsed :comment
-                                     (str/join "\n" (.pending-comments parser)))
+                                     (str/join "\n" @(:pending-comments parser)))
                                parsed)]
-                  (set! (.pending-comments parser) [])
+                  (reset! (:pending-comments parser) [])
 
                   ;; Validate parameter count
                   (let [[valid? error-msg] (instr/validate-instruction
@@ -338,19 +336,20 @@
 
 (defn parse-subroutine
   "Parse a subroutine definition"
-  [^ILParser parser name line-number]
+  [parser name line-number]
   (loop [networks []]
     (skip-blank-lines parser)
 
     ;; Collect comments
     (let [comments (collect-comments parser)]
       (when (seq comments)
-        (set! (.pending-comments parser)
-              (into (.pending-comments parser) comments))))
+        (swap! (:pending-comments parser)
+               into
+               comments)))
 
     (if-not (peek-line parser)
       ;; End of input
-      (ParsedSubroutine. name (vec (reverse networks)) line-number)
+      (ParsedSubroutine. name (vec networks) line-number)
 
       (let [line (peek-line parser)
             trimmed (trim-whitespace line)]
@@ -358,7 +357,7 @@
         (cond
           ;; Another SBR - end this subroutine
           (re-matches #"(?i)^SBR\s.*" trimmed)
-          (ParsedSubroutine. name (vec (reverse networks)) line-number)
+          (ParsedSubroutine. name (vec networks) line-number)
 
           ;; NETWORK declaration
           (re-matches #"(?i)^NETWORK\s+(\d+)" trimmed)
@@ -382,11 +381,11 @@
 
 (defn parse-program
   "Parse a complete IL program"
-  [^ILParser parser]
-  (set! (.current-line parser) 0)
-  (set! (.errors parser) [])
-  (set! (.warnings parser) [])
-  (set! (.pending-comments parser) [])
+  [parser]
+  (reset! (:current-line parser) 0)
+  (reset! (:errors parser) [])
+  (reset! (:warnings parser) [])
+  (reset! (:pending-comments parser) [])
 
   (loop [main-networks []
          subroutines {}]
@@ -395,17 +394,18 @@
     ;; Collect comments
     (let [comments (collect-comments parser)]
       (when (seq comments)
-        (set! (.pending-comments parser)
-              (into (.pending-comments parser) comments))))
+        (swap! (:pending-comments parser)
+               into
+               comments)))
 
     (skip-blank-lines parser)
 
     (if-not (peek-line parser)
       ;; End of input
-      (ParsedProgram. (vec (reverse main-networks))
+      (ParsedProgram. (vec main-networks)
                      subroutines
-                     (vec (.errors parser))
-                     (vec (.warnings parser)))
+                     (vec @(:errors parser))
+                     (vec @(:warnings parser)))
 
       (let [line (peek-line parser)
             trimmed (trim-whitespace line)]
@@ -513,3 +513,5 @@
                     (if (seq (:params instr))
                       (str " " (str/join " " (:params instr)))
                       "")))))
+
+;;; End of parser.clj)

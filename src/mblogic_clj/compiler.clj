@@ -510,11 +510,19 @@
         subroutines (:subroutines parsed-program)
 
         ;; Compile main program
-        main-closures (mapcat #(compile-network %) networks)
+        network-closures (vec (for [network networks]
+                                (let [closures (compile-network network)]
+                                  (fn [ctx]
+                                    ;; Clear stack at start of network
+                                    (reset! (:logic-stack ctx) '())
+                                    (reset! (:stacktop ctx) false)
+                                    ;; Execute all instructions in network
+                                    (doseq [closure closures]
+                                      (closure ctx))))))
         main-fn (fn [data-table]
                   (let [ctx (make-execution-context data-table {})]
-                    (doseq [closure main-closures]
-                      (closure ctx))))
+                    (doseq [net-fn network-closures]
+                      (net-fn ctx))))
 
         ;; Compile subroutines
         subroutine-fns (reduce (fn [acc [name sbr]]
