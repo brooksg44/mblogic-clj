@@ -3,6 +3,7 @@
    Provides HTTP endpoints for PLC control and monitoring."
   (:require [ring.adapter.jetty :as jetty]
             [ring.util.response :refer [response status]]
+            [cheshire.core :as json]
             [clojure.tools.logging :as log]))
 
 ;;; ============================================================
@@ -16,22 +17,28 @@
 ;;; HTTP Handlers
 ;;; ============================================================
 
+(defn json-response [data & [status-code]]
+  "Create a JSON response with proper headers"
+  {:status (or status-code 200)
+   :headers {"Content-Type" "application/json"}
+   :body (json/generate-string data)})
+
 (defn health-handler [req]
   "Simple health check endpoint"
-  (response {:status "ok" :message "MBLogic-CLJ Server Running"}))
+  (json-response {:status "ok" :message "MBLogic-CLJ Server Running"}))
 
 (defn root-handler [req]
   "Root endpoint"
-  (response {:name "MBLogic-CLJ"
-             :version "1.0"
-             :description "PLC Compiler/Interpreter"
-             :endpoints ["/health" "/api/status" "/api/data-table"]}))
+  (json-response {:name "MBLogic-CLJ"
+                  :version "1.0"
+                  :description "PLC Compiler/Interpreter"
+                  :endpoints ["/health" "/api/status" "/api/data-table"]}))
 
 (defn not-found-handler [req]
   "404 handler"
-  (-> (response {:error "Not found"
-                 :path (:uri req)})
-      (status 404)))
+  (json-response {:error "Not found"
+                  :path (:uri req)}
+                 404))
 
 ;;; ============================================================
 ;;; Router
