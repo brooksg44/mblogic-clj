@@ -318,7 +318,7 @@
   (make-branch-cell VBAR_R row col))
 
 ;;; ============================================================
-;;; Matrix Operations (Core Algorithm)
+;;; Matrix Operations (Corrected Algorithm)
 ;;; ============================================================
 
 (defn matrix-height
@@ -333,65 +333,303 @@
     0
     (apply max (map count matrix))))
 
+(defn copy-cell
+  "Create a shallow copy of a ladder cell"
+  [cell]
+  (when cell
+    (->LadderCell
+      (:type cell)
+      (:symbol cell)
+      (:address cell)
+      (:addresses cell)
+      (:value cell)
+      (:opcode cell)
+      (:params cell)
+      (:row cell)
+      (:col cell)
+      (:monitor-type cell))))
+
 (defn append-cell-to-matrix
-  "Append a cell to the current row of the matrix.
-   Pads earlier rows to match the new row length for matrix consistency."
+  "Append CELL to the first (row 0) of MATRIX, padding other rows with nil.
+   This matches Python PLCLadder._AppendInputCell exactly.
+   Returns the modified matrix."
   [cell matrix]
-  (if (empty? matrix)
-    [[cell]]
-    (let [current-row (last matrix)
-          new-row (conj current-row cell)
-          new-width (count new-row)
-          max-previous-width (if (= (count matrix) 1)
-                               0
-                               (apply max (map count (butlast matrix))))]
-      ; If other rows are shorter than the new row, pad them
-      (if (> new-width (inc max-previous-width))
-        ; Need to pad earlier rows
-        (let [padded-matrix (vec (map (fn [row]
-                                        (if (< (count row) new-width)
-                                          (vec (concat row (repeat (- new-width (count row)) nil)))
-                                          (vec row)))
-                                      (butlast matrix)))]
-          (conj padded-matrix (vec new-row)))
-        (conj (vec (butlast matrix)) (vec new-row))))))
+  (let [cell-copy (copy-cell cell)]
+    ; Add to first row
+    (let [new-matrix (vec matrix)
+          first-row (vec (first new-matrix))
+          updated-first (conj first-row cell-copy)]
+      (assoc new-matrix 0 updated-first)
+      ; Pad other rows with nil to keep rectangular
+      (mapv (fn [idx row]
+              (if (zero? idx)
+                updated-first
+                (conj (vec row) nil)))
+            (range (count new-matrix))
+            new-matrix))))
+
+(defn append-cell-to-row
+  "Append CELL to a specific TARGET-ROW of MATRIX, padding other rows with hbar.
+   Returns the modified matrix."
+  [cell matrix target-row]
+  (let [cell-copy (copy-cell cell)
+        height (matrix-height matrix)
+        target-row (min target-row (dec height))]
+    (mapv (fn [idx row]
+            (let [updated-row (vec row)]
+              (if (= idx target-row)
+                (conj updated-row cell-copy)
+                (conj updated-row (make-hbar-cell idx (count row))))))
+          (range height)
+          matrix)))
+
+(defn append-cell-to-last-row
+  "Append CELL to the LAST row of MATRIX, padding other rows with hbar.
+   Returns the modified matrix."
+  [cell matrix]
+  (let [cell-copy (copy-cell cell)
+        height (matrix-height matrix)
+        last-row-idx (dec height)]
+    (mapv (fn [idx row]
+            (let [updated-row (vec row)]
+              (if (= idx last-row-idx)
+                (conj updated-row cell-copy)
+                (conj updated-row (make-hbar-cell idx (count row))))))
+          (range height)
+          matrix)))
 
 (defn merge-matrix-below
-  "Merge lower matrix below upper matrix (for OR branches)
-   Ensures rows are padded to same width with nil values"
-  [upper lower]
-  (let [upper-height (matrix-height upper)
-        lower-height (matrix-height lower)
-        upper-width (matrix-width upper)
-        lower-width (matrix-width lower)
-        max-width (max upper-width lower-width)
+  "Merge NEW-MATRIX below ORIGINAL-MATRIX (for OR/ORSTR parallel connections).
+   Matches Python PLCLadder.MergeBelow algorithm exactly:
+   - Smart padding per row based on last cell content
+   - Row 0 always gets hbar padding
+   - Other rows get nil padding if last cell is nil or vertical branch, else hbar
+   Returns the merged matrix."
+  [original-matrix new-matrix]
+  (let [original-width (matrix-width original-matrix)
+        new-width (matrix-width new-matrix)
+        max-width (max original-width new-width)]
 
-        ; Pad rows to max width
-        pad-row (fn [row]
-          (let [row-len (count row)]
-            (if (< row-len max-width)
-              (concat row (repeat (- max-width row-len) nil))
-              row)))
+    ; Pad original-matrix rows if needed
+    (let [padded-original
+          (mapv (fn [i row]
+                  (let [row-len (count row)
+                        diff (- max-width row-len)]
+                    (if (zero? diff)
+                      row
+                      (vec (concat row
+                            (cond
+                              ; Row 0: always pad with hbar
+                              (zero? i) (repeat diff (make-hbar-cell i row-len))
+                              ; Last cell is nil: pad with nil
+                              (nil? (last row)) (repeat diff nil)
+                              ; Last cell is vertical branch: pad with nil
+                              (and (last row) (vertical-branch-symbol? (:symbol (last row))))
+                              (repeat diff nil)
+                              ; Otherwise: pad with hbar
+                              :else (repeat diff (make-hbar-cell i row-len))))))))
+                (range (count original-matrix))
+                original-matrix)
 
-        padded-upper (mapv (fn [row] (vec (pad-row row))) upper)
-        padded-lower (mapv (fn [row] (vec (pad-row row))) lower)
-        result (cond
-                 (zero? upper-height) padded-lower
-                 (zero? lower-height) padded-upper
-                 :else
-                 (vec (concat padded-upper padded-lower)))]
+          ; Pad new-matrix rows if needed
+          padded-new
+          (mapv (fn [i row]
+                  (let [row-len (count row)
+                        diff (- max-width row-len)]
+                    (if (zero? diff)
+                      row
+                      (vec (concat row
+                            (cond
+                              ; Row 0: always pad with hbar
+                              (zero? i) (repeat diff (make-hbar-cell i row-len))
+                              ; Last cell is nil: pad with nil
+                              (nil? (last row)) (repeat diff nil)
+                              ; Last cell is vertical branch: pad with nil
+                              (and (last row) (vertical-branch-symbol? (:symbol (last row))))
+                              (repeat diff nil)
+                              ; Otherwise: pad with hbar
+                              :else (repeat diff (make-hbar-cell i row-len))))))))
+                (range (count new-matrix))
+                new-matrix)]
 
-    result))
+      ; Merge: append new-matrix rows to original-matrix
+      (vec (concat padded-original padded-new)))))
 
 (defn merge-matrix-right
-  "Merge right matrix with left side connectors (for ANDSTR)"
-  [_left right]
-  right)
+  "Merge NEW-MATRIX to the right of ORIGINAL-MATRIX (for ANDSTR series connection).
+   Matches Python PLCLadder._MergeRight algorithm exactly:
+   - When new-matrix has multiple rows, INSERT left-side connectors into new-matrix
+     BEFORE merging (branchttr at top, branchtr in middle, branchr at bottom)
+   - Handle height differences by padding BOTH matrices to same height
+   - Width equalization with hbar padding
+   Returns the merged matrix."
+  [original-matrix new-matrix]
+  (let [original-height (matrix-height original-matrix)
+        new-height (matrix-height new-matrix)
+
+        ; Insert left-side branch connectors into new-matrix if it has multiple rows
+        new-mx-with-connectors
+        (if (> new-height 1)
+          (let [with-connectors (mapv (fn [row-idx row]
+                                        (vec (cons (make-branch-tr-cell row-idx 0) row)))
+                                      (range new-height)
+                                      new-matrix)]
+            ; Set first row to branchttr and last row to branchr
+            (assoc with-connectors
+              0 (assoc (get with-connectors 0) 0 (make-branch-ttr-cell 0 0))
+              (dec new-height) (assoc (get with-connectors (dec new-height)) 0
+                                      (make-branch-r-cell (dec new-height) 0))))
+          new-matrix)
+
+        ; Equalize widths with hbar padding
+        max-width (max (matrix-width original-matrix) (matrix-width new-mx-with-connectors))
+        padded-original (mapv (fn [row]
+                                (let [row-len (count row)
+                                      diff (- max-width row-len)]
+                                  (if (zero? diff)
+                                    row
+                                    (vec (concat row (repeat diff (make-hbar-cell 0 row-len)))))))
+                              original-matrix)
+        padded-new (mapv (fn [row]
+                           (let [row-len (count row)
+                                 diff (- max-width row-len)]
+                             (if (zero? diff)
+                               row
+                               (vec (concat row (repeat diff (make-hbar-cell 0 row-len)))))))
+                         new-mx-with-connectors)
+
+        ; Equalize heights by padding shorter matrix with nil rows
+        padded-both-heights
+        (cond
+          (> original-height new-height)
+          [padded-original (vec (concat padded-new
+                                        (repeat (- original-height new-height)
+                                                (vec (repeat max-width nil)))))]
+          (> new-height original-height)
+          [(vec (concat padded-original
+                        (repeat (- new-height original-height)
+                                (vec (repeat max-width nil)))))
+           padded-new]
+          :else
+          [padded-original padded-new])]
+
+    ; Merge by zipping rows and concatenating
+    (let [[final-orig final-new] padded-both-heights]
+      (mapv (fn [orig-row new-row]
+              (vec (concat orig-row new-row)))
+            final-orig
+            final-new))))
 
 (defn close-branch-block
-  "Add right-side closing connectors to a matrix"
+  "Close the RIGHT side of a branch block (for OR/ORSTR) by adding LEFT-side connectors.
+   Matches Python PLCLadder.CloseBlock algorithm exactly:
+   - Determines wideinstr flag (whether last non-nil cell in any row is not a branch)
+   - Determines lastrow (last row with a non-nil last cell)
+   - Adds appropriate connectors per row based on current last cell
+   Returns the modified matrix."
   [matrix]
-  matrix)
+  (let [height (matrix-height matrix)
+
+        ; Calculate wideinstr and lastrow
+        {wideinstr :wideinstr lastrow :lastrow}
+        (reduce (fn [acc i]
+                  (let [row (nth matrix i)
+                        last-cell (last row)]
+                    (cond-> acc
+                      (and last-cell (not (branch-symbol? (:symbol last-cell))))
+                      (assoc :wideinstr true)
+                      last-cell
+                      (assoc :lastrow i))))
+                {:wideinstr false :lastrow 0}
+                (range height))]
+
+    ; Process each row to add left-side connectors
+    (mapv (fn [i row]
+            (let [last-cell (last row)]
+              (cond
+                ; Row is beyond lastrow with content
+                (> i lastrow)
+                (if wideinstr (conj row nil) row)
+
+                ; Last cell is nil
+                (nil? last-cell)
+                (vec (concat (if wideinstr row (vec (butlast row)))
+                             [(make-vbar-l-cell i (count row))]))
+
+                ; Last cell is hbar
+                (= (:symbol last-cell) HBAR)
+                (if wideinstr
+                  (conj row (make-branch-tl-cell i (count row)))
+                  (vec (concat (vec (butlast row))
+                               [(make-branch-tl-cell i (dec (count row)))])))
+
+                ; Last cell is NOT a branch (instruction)
+                (not (branch-symbol? (:symbol last-cell)))
+                (if wideinstr
+                  (conj row (make-branch-tl-cell i (count row)))
+                  (vec (concat (vec (butlast row))
+                               [(make-branch-tl-cell i (dec (count row)))])))
+
+                ; Last cell is branchl
+                (= (:symbol last-cell) BRANCH_L)
+                row
+
+                ; Last cell is another branch symbol
+                (branch-symbol? (:symbol last-cell))
+                row
+
+                ; Default
+                :else
+                (vec (concat (if wideinstr row (vec (butlast row)))
+                             [(make-vbar-l-cell i (count row))])))))
+          (range height)
+          matrix)
+
+    ; Add final corner connectors: branchttl at top, branchl at bottom
+    (let [result (vec (map-indexed (fn [i row]
+                                     (if (or (zero? i) (= i lastrow))
+                                       (vec (concat (vec (butlast row))
+                                                    [(if (zero? i)
+                                                       (make-branch-ttl-cell i (dec (count row)))
+                                                       (make-branch-l-cell i (dec (count row))))]))
+                                       row))
+                                   matrix))]
+      result)))
+
+(defn add-orstr-junction
+  "Add junction connectors at the ORSTR merge point.
+   TOP-HEIGHT is the number of rows from the top matrix (before merge).
+   This adds vertical connections between the bottom of the top section
+   and the top of the bottom section at the rightmost column.
+   Result: top-bottom-row gets branchtl (├), bottom-top-row gets branchr (┘)
+   Returns the modified matrix."
+  [matrix top-height]
+  (let [width (matrix-width matrix)
+        height (matrix-height matrix)]
+    (if (and (> width 0) (> height top-height) (> top-height 0))
+      (let [junction-col (dec width)
+            top-bottom-row (dec top-height)
+            bottom-top-row top-height
+            top-row (nth matrix top-bottom-row)
+            bottom-row (nth matrix bottom-top-row)]
+        ; Top section bottom row: convert to branchtl (├)
+        (if (and top-row (>= (count top-row) width))
+          (let [top-cell (nth top-row junction-col)]
+            (if top-cell
+              (assoc matrix top-bottom-row
+                     (assoc (vec top-row) junction-col
+                            (assoc top-cell :symbol BRANCH_TL)))
+              matrix))
+          ; Bottom section top row: convert to branchr (┘)
+          (if (and bottom-row (>= (count bottom-row) width))
+            (let [bottom-cell (nth bottom-row junction-col)]
+              (if bottom-cell
+                (assoc matrix bottom-top-row
+                       (assoc (vec bottom-row) junction-col
+                              (assoc bottom-cell :symbol BRANCH_R)))
+                matrix))
+            matrix)))
+      matrix)))
 
 ;;; ============================================================
 ;;; Instruction to Cell Conversion
@@ -427,66 +665,40 @@
       (make-ladder-cell :type :empty :row row :col 0))))
 
 ;;; ============================================================
-;;; Matrix Rectification (ensure all rows same width)
+;;; Flatten Matrix to Cells
 ;;; ============================================================
-
-(defn rectify-matrix
-  "Ensure all rows in matrix have the same width by padding with nil"
-  [matrix]
-  (if (empty? matrix)
-    matrix
-    (let [max-width (matrix-width matrix)]
-      (mapv (fn [row]
-              (let [row-len (count row)]
-                (if (< row-len max-width)
-                  (vec (concat row (repeat (- max-width row-len) nil)))
-                  (vec row))))
-            matrix))))
-
-;;; ============================================================
-;;; Network to Ladder Rung Conversion (CORE ALGORITHM)
-;;; ============================================================
-
-(defn has-later-cell?
-  "Check if there's any non-nil cell in this row after the given column"
-  [row col-idx]
-  (some identity (subvec (vec row) (inc col-idx))))
 
 (defn flatten-matrix-to-cells
   "Convert matrix to flat cell list with proper row/col positions.
    Fill nil gaps with hbar (horizontal wire) connectors for continuity."
   [matrix]
-  (let [input-cells (atom [])]
+  (let [cells (atom [])]
     (doseq [[row-idx row] (map-indexed vector matrix)]
       (doseq [[col-idx cell] (map-indexed vector row)]
-        (cond
+        (if (some? cell)
           ; Real cell - set position and collect
-          (some? cell)
-          (swap! input-cells conj
-            (assoc cell :row row-idx :col col-idx))
+          (swap! cells conj (assoc cell :row row-idx :col col-idx))
+          ; Nil - fill with hbar if in row 0 or if there are later cells in this row
+          (when (or (zero? row-idx)
+                    (some identity (drop (inc col-idx) row)))
+            (swap! cells conj (make-hbar-cell row-idx col-idx))))))
+    @cells))
 
-          ; Nil in row 0 - fill with hbar for wire continuity
-          (= row-idx 0)
-          (swap! input-cells conj (make-hbar-cell row-idx col-idx))
-
-          ; Nil in branch row before first non-nil in that row
-          ; (check if there's any cell in this row at a later column)
-          (has-later-cell? row col-idx)
-          (swap! input-cells conj (make-hbar-cell row-idx col-idx)))))
-
-    @input-cells))
+;;; ============================================================
+;;; Network to Ladder Rung Conversion (CORE ALGORITHM)
+;;; ============================================================
 
 (defn network-to-ladder-rung
   "Convert a parsed network to a ladder rung structure using matrix-based algorithm.
    This produces Python-compatible matrixdata with explicit branch connector cells.
 
    Algorithm (matches Python PLCLadder.py):
-   - Matrix is a list of rows: ([row0-cells] [row1-cells] ...)
+   - Matrix is a list of rows: ((row0-cells) (row1-cells) ...)
    - matrix-stack holds matrices for nested blocks
    - STR: push current matrix, start new
    - AND: append cell to current row
    - OR: create new row matrix, merge below, close block
-   - ORSTR: pop stack, merge below, close block
+   - ORSTR: pop stack, merge below, close block, add junction
    - ANDSTR: pop stack, merge right
    - Outputs are handled separately after inputs"
   [network]
@@ -515,7 +727,8 @@
       (let [current-matrix (atom [[]])      ; Start with one empty row
             matrix-stack (atom [])            ; Stack for STR blocks
             inputs-vec @inputs
-            outputs-vec @outputs]
+            outputs-vec @outputs
+            top-height (atom 0)]  ; Track height of top matrix for ORSTR junction
 
         ; Process each input instruction
         (doseq [instr inputs-vec]
@@ -530,11 +743,12 @@
               ; STR instruction - ALWAYS push current and start new
               (store-instruction? opcode)
               (do
+                (reset! top-height (matrix-height @current-matrix))
                 (swap! matrix-stack conj @current-matrix)
                 (reset! current-matrix [[]])
                 (reset! current-matrix (append-cell-to-matrix cell @current-matrix)))
 
-              ; AND instruction - append to current row
+              ; AND instruction - append to first row (row 0)
               (and-instruction? opcode)
               (reset! current-matrix (append-cell-to-matrix cell @current-matrix))
 
@@ -544,13 +758,14 @@
                 (reset! current-matrix (merge-matrix-below @current-matrix new-matrix))
                 (reset! current-matrix (close-branch-block @current-matrix)))
 
-              ; ORSTR - pop and merge below, then close block
+              ; ORSTR - pop and merge below, then close block, add junction
               (orstr-instruction? opcode)
               (when (seq @matrix-stack)
                 (let [old-matrix (peek @matrix-stack)]
                   (swap! matrix-stack pop)
                   (reset! current-matrix (merge-matrix-below old-matrix @current-matrix))
-                  (reset! current-matrix (close-branch-block @current-matrix))))
+                  (reset! current-matrix (close-branch-block @current-matrix))
+                  (reset! current-matrix (add-orstr-junction @current-matrix @top-height))))
 
               ; ANDSTR - pop and merge right with left-side connectors
               (andstr-instruction? opcode)
@@ -573,24 +788,22 @@
             ; Double rung (2 parallel inputs): stack has 2 entries
             (= stack-len 2)
             (let [last-matrix (first @matrix-stack)]
-              (reset! current-matrix (concat last-matrix @current-matrix)))
+              (reset! current-matrix (vec (concat last-matrix @current-matrix))))
 
             ; Triple rung (3 parallel inputs): stack has 3 entries
             (= stack-len 3)
             (let [x2-matrix (first @matrix-stack)
                   x1-matrix (second @matrix-stack)]
-              (reset! current-matrix (concat x1-matrix x2-matrix @current-matrix)))
+              (reset! current-matrix (vec (concat x1-matrix x2-matrix @current-matrix))))
 
             ; Any other stack size is invalid
             :else
             (println "WARNING: Invalid IL program structure: matrix stack has" stack-len "entries")))
 
         ; Convert matrix to flat cell list with correct row/col positions
-        (let [; Rectify matrix to ensure all rows have same width
-              rectified-matrix (rectify-matrix @current-matrix)
-              input-cells (flatten-matrix-to-cells rectified-matrix)
-              current-matrix-height (matrix-height rectified-matrix)
-              current-matrix-width (matrix-width rectified-matrix)
+        (let [input-cells (flatten-matrix-to-cells @current-matrix)
+              current-matrix-height (matrix-height @current-matrix)
+              current-matrix-width (matrix-width @current-matrix)
 
               ; Process output instructions
               ; First pass: collect all output cells with sequential row numbers
@@ -647,8 +860,7 @@
             (:number network)
             (concat input-cells @output-cells)
             (let [all-cells (concat input-cells @output-cells)
-                  max-col (if (empty? all-cells) 0 (apply max (map :col all-cells)))
-                  rung-cols (max (inc max-col) current-matrix-width 1)]
+                  max-col (if (empty? all-cells) 0 (apply max (map :col all-cells)))]
               (max current-matrix-height (count @output-cells) 1))
             (let [all-cells (concat input-cells @output-cells)
                   max-col (if (empty? all-cells) 0 (apply max (map :col all-cells)))]
