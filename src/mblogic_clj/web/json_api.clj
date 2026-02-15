@@ -1,8 +1,10 @@
 (ns mblogic-clj.web.json-api
   "JSON API endpoints and response generation.
-   Provides JSON conversion for program state, data table, and program metadata."
+   Provides JSON conversion for program state, data table, program metadata, and ladder diagrams."
   (:require [mblogic-clj.data-table :as dt]
             [mblogic-clj.instructions :as instr]
+            [mblogic-clj.web.ladder-render :as ladder]
+            [cheshire.core :as json]
             [clojure.string :as str]))
 
 ;;; ============================================================
@@ -228,5 +230,115 @@
     {:success true :updated (count updates)}
     (catch Exception e
       {:success false :error (str e)})))
+
+;;; ============================================================
+;;; Ladder Diagram JSON Conversion
+;;; ============================================================
+
+(defn plist-to-json
+  "Convert a plist (property list map) to JSON string.
+   Uses cheshire for JSON encoding."
+  [plist]
+  (try
+    (json/generate-string plist)
+    (catch Exception e
+      (json/generate-string {:error (str "JSON conversion failed: " e)}))))
+
+(defn ladder-cell-to-json
+  "Convert a ladder cell to JSON-compatible map"
+  [cell]
+  {:type (str (:type cell))
+   :symbol (:symbol cell)
+   :address (:address cell)
+   :addresses (:addresses cell)
+   :opcode (:opcode cell)
+   :params (:params cell)
+   :row (:row cell)
+   :col (:col cell)
+   :monitor-type (when (:monitor-type cell) (str (:monitor-type cell)))})
+
+(defn ladder-rung-to-json
+  "Convert a ladder rung to JSON-compatible map"
+  [rung]
+  {:number (:number rung)
+   :rows (:rows rung)
+   :cols (:cols rung)
+   :comment (:comment rung)
+   :addresses (:addresses rung)
+   :cells (mapv ladder-cell-to-json (:cells rung))
+   :il-fallback (:il-fallback rung)})
+
+(defn ladder-program-to-json
+  "Convert a ladder program to JSON string"
+  [ladder-prog]
+  (try
+    (json/generate-string
+      {:subrname (:name ladder-prog)
+       :addresses (sort (:addresses ladder-prog))
+       :total-rungs (count (:rungs ladder-prog))
+       :subrdata (mapv ladder-rung-to-json (:rungs ladder-prog))})
+    (catch Exception e
+      (json/generate-string {:error (str "Failed to convert ladder program: " e)}))))
+
+(defn program-to-ladder-json
+  "Convert a parsed program to ladder JSON.
+   Returns JSON string with ladder data for all subroutines."
+  [parsed-program]
+  (try
+    (let [main-ladder (ladder/program-to-ladder parsed-program :name "main")
+          subroutine-names (ladder/list-subroutine-names parsed-program)
+          subroutine-ladders (into {}
+                               (map (fn [name]
+                                      (when (not= name "main")
+                                        [name (ladder/program-to-ladder parsed-program :name name)]))
+                                    subroutine-names))
+          subroutine-ladders (filter (fn [[_k v]] (some? v)) subroutine-ladders)]
+      (json/generate-string
+        {:main (ladder-program-to-json main-ladder)
+         :subroutines (into {}
+                        (map (fn [[name ladder-prog]]
+                               [name (ladder-program-to-json ladder-prog)])
+                             subroutine-ladders))
+         :subroutine-list subroutine-names}))
+    (catch Exception e
+      (json/generate-string {:error (str "Failed to convert program to ladder: " e)}))))
+
+(defn get-ladder-for-subroutine
+  "Get ladder JSON for a specific subroutine"
+  [parsed-program subroutine-name]
+  (try
+    (if (= subroutine-name "main")
+      (let [ladder-prog (ladder/program-to-ladder parsed-program :name "main")]
+        (json/generate-string
+          {:status "ok"
+           :subrname subroutine-name
+           :data (json/parse-string (ladder-program-to-json ladder-prog))}))
+      (let [ladder-prog (ladder/program-to-ladder parsed-program :name subroutine-name)]
+        (if ladder-prog
+          (json/generate-string
+            {:status "ok"
+             :subrname subroutine-name
+             :data (json/parse-string (ladder-program-to-json ladder-prog))})
+          (json/generate-string
+            {:status "error"
+             :message (str "Subroutine not found: " subroutine-name)}))))
+    (catch Exception e
+      (json/generate-string
+        {:status "error"
+         :message (str "Failed to get ladder for subroutine: " e)}))))
+
+(defn get-subroutine-list
+  "Get list of all subroutine names in a parsed program"
+  [parsed-program]
+  (try
+    (let [names (ladder/list-subroutine-names parsed-program)]
+      (json/generate-string
+        {:status "ok"
+         :subroutines names
+         :count (count names)}))
+    (catch Exception e
+      (json/generate-string
+        {:status "error"
+         :message (str "Failed to get subroutine list: " e)}))))
 
 ;;; End of json-api.clj

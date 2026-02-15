@@ -7,7 +7,8 @@
             [clojure.string :as str]
             [clojure.java.io :as io]
             [mblogic-clj.parser :as parser]
-            [mblogic-clj.ladder-renderer :as ladder]))
+            [mblogic-clj.web.ladder-render :as ladder]
+            [mblogic-clj.web.json-api :as api]))
 
 ;;; ============================================================
 ;;; Global Server State
@@ -51,12 +52,14 @@
   "API root endpoint (for API documentation)"
   (json-response {:name "MBLogic-CLJ"
                   :version "1.0"
-                  :description "PLC Compiler/Interpreter"
+                  :description "PLC Compiler/Interpreter with Ladder Rendering"
                   :endpoints {
                     :health {:method "GET" :path "/health" :description "Health check"}
-                    :load-program {:method "POST" :path "/api/load-program" :description "Load IL program"}
+                    :load-program {:method "POST" :path "/api/load-program" :description "Load IL program from test/plcprog.txt"}
                     :program-summary {:method "GET" :path "/api/program-summary" :description "Get loaded program summary"}
-                    :ladder {:method "GET" :path "/api/ladder/{network-id}" :description "Render network as ladder diagram"}
+                    :ladder {:method "GET" :path "/api/ladder/{network-id}" :description "Render network as ladder diagram (legacy)"}
+                    :ladder-js {:method "GET" :path "/api/ladder-js?subrname=X" :description "Get ladder JSON for subroutine"}
+                    :subroutines {:method "GET" :path "/api/subroutines" :description "List all subroutine names"}
                   }}))
 
 (defn not-found-handler [req]
@@ -69,13 +72,16 @@
   "Load an IL program from the test directory"
   (try
     (let [source (slurp "test/plcprog.txt")
-          parsed (parser/parse-il-string source)]
+          parsed (parser/parse-il-string source)
+          main-networks (:main-networks parsed)
+          subroutines (keys (:subroutines parsed))]
       (reset! current-program parsed)
-      (reset! analyzed-networks (ladder/analyze-program parsed))
       (log/info "Program loaded successfully")
       (json-response {:status "ok"
                       :message "Program loaded"
-                      :networks (count @analyzed-networks)
+                      :main-networks (count main-networks)
+                      :subroutines subroutines
+                      :total-subroutines (count subroutines)
                       :file "test/plcprog.txt"}))
     (catch Exception e
       (log/error "Failed to load program:" (str e))
@@ -84,29 +90,69 @@
 (defn program-summary-handler [req]
   "Get summary of currently loaded program"
   (if @current-program
-    (let [summary (ladder/render-program-summary @analyzed-networks)]
+    (let [main-networks (:main-networks @current-program)
+          subroutines (keys (:subroutines @current-program))]
       (json-response {:status "ok"
                       :program-loaded true
-                      :total-networks (count @analyzed-networks)
-                      :ladder-renderability summary}))
+                      :main-networks (count main-networks)
+                      :subroutines subroutines
+                      :total-subroutines (count subroutines)}))
     (json-response {:status "ok" :program-loaded false :message "No program loaded"})))
 
+(defn ladder-js-handler [req]
+  "Get ladder JSON for a specific subroutine.
+   Query parameter: subrname=X (default: 'main')"
+  (if @current-program
+    (let [query-string (:query-string req)
+          params (if query-string
+                   (into {}
+                     (map (fn [pair]
+                            (let [[k v] (str/split pair #"=")]
+                              [(str/lower-case k) (java.net.URLDecoder/decode v "UTF-8")]))
+                          (str/split query-string #"&")))
+                   {})
+          subrname (get params "subrname" "main")]
+      (try
+        {:status 200
+         :headers {"Content-Type" "application/json"}
+         :body (api/get-ladder-for-subroutine @current-program subrname)}
+        (catch Exception e
+          (log/error "Error generating ladder JSON:" (str e))
+          (json-response {:error (str e)} 500))))
+    (json-response {:error "No program loaded"} 400)))
+
+(defn subroutines-handler [req]
+  "List all subroutine names in the loaded program"
+  (if @current-program
+    (try
+      {:status 200
+       :headers {"Content-Type" "application/json"}
+       :body (api/get-subroutine-list @current-program)}
+      (catch Exception e
+        (log/error "Error getting subroutine list:" (str e))
+        (json-response {:error (str e)} 500)))
+    (json-response {:error "No program loaded"} 400)))
+
 (defn ladder-renderer-handler [req]
-  "Render a specific network as a ladder diagram"
+  "Render a specific network as a ladder diagram (legacy endpoint)"
   (if @current-program
     (let [network-id (some-> (:uri req)
                              (str/split #"/")
                              last
                              Integer/parseInt)]
-      (if-let [rung-analyses (get @analyzed-networks network-id)]
-        (let [can-render? (every? :can-render-ladder? rung-analyses)
-              rendered (ladder/render-network network-id rung-analyses)]
-          (json-response {:status "ok"
-                          :network-id network-id
-                          :can-render-ladder? can-render?
-                          :instruction-count (reduce + 0 (map :instruction-count rung-analyses))
-                          :svg rendered}))
-        (json-response {:error "Network not found"} 404)))
+      (try
+        (let [ladder-prog (ladder/program-to-ladder @current-program :name "main")]
+          (if-let [rung (first (filter #(= (:number %) network-id) (:rungs ladder-prog)))]
+            (json-response {:status "ok"
+                            :network-id network-id
+                            :cells (count (:cells rung))
+                            :rows (:rows rung)
+                            :cols (:cols rung)
+                            :addresses (:addresses rung)})
+            (json-response {:error "Network not found"} 404)))
+        (catch Exception e
+          (log/error "Error rendering network:" (str e))
+          (json-response {:error (str e)} 500))))
     (json-response {:error "No program loaded"} 400)))
 
 ;;; ============================================================
@@ -117,24 +163,38 @@
   "Main application router"
   (let [method (:request-method req)
         path (:uri req)]
-    (case [method path]
+    (cond
       ;; Web UI
-      [:get "/"] (index-handler req)
+      (and (= method :get) (= path "/"))
+      (index-handler req)
 
       ;; Health check
-      [:get "/health"] (health-handler req)
+      (and (= method :get) (= path "/health"))
+      (health-handler req)
 
       ;; API endpoints
-      [:get "/api"] (api-root-handler req)
-      [:post "/api/load-program"] (load-program-handler req)
-      [:get "/api/program-summary"] (program-summary-handler req)
+      (and (= method :get) (= path "/api"))
+      (api-root-handler req)
+
+      (and (= method :post) (= path "/api/load-program"))
+      (load-program-handler req)
+
+      (and (= method :get) (= path "/api/program-summary"))
+      (program-summary-handler req)
 
       ;; Ladder diagram rendering routes
-      (cond
-        (and (= method :get) (str/starts-with? path "/api/ladder/"))
-        (ladder-renderer-handler req)
+      (and (= method :get) (str/starts-with? path "/api/ladder-js"))
+      (ladder-js-handler req)
 
-        :else (not-found-handler req)))))
+      (and (= method :get) (= path "/api/subroutines"))
+      (subroutines-handler req)
+
+      (and (= method :get) (str/starts-with? path "/api/ladder/"))
+      (ladder-renderer-handler req)
+
+      ;; Default 404
+      :else
+      (not-found-handler req))))
 
 ;;; ============================================================
 ;;; Server Control
