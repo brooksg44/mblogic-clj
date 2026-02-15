@@ -29,19 +29,17 @@
   [& args]
   (log/info "Starting MBLogic-CLJ PLC Server...")
 
-  (let [config (merge default-config
-                      (when (seq args)
-                        {:port (parse-long (first args))}))]
-    (log/info "Configuration:" config)
+  (let [port (if (seq args)
+               (parse-long (first args))
+               (:port default-config))]
+    (log/info "Starting server on port" port)
 
     ;; Start the web server
-    (server/start-web-server config)
+    (let [result (server/start-web-server :port port)]
+      (log/info "Server status:" result)
 
-    (log/info "MBLogic-CLJ running at http://{}:{}"
-              (:host config) (:port config))
-
-    ;; Keep the server running
-    (Thread/sleep Long/MAX_VALUE)))
+      ;; Keep the server running
+      (Thread/sleep Long/MAX_VALUE))))
 
 ;;; ============================================================
 ;;; Development Helpers
@@ -68,11 +66,3 @@
     (interpreter/run-continuous interp :target-scan-time 10)
     interp))
 
-(defn load-and-test
-  "Load a program and run a single scan for testing."
-  [program-file]
-  (let [{:keys [compiled]} (load-program program-file)
-        interp (interpreter/make-plc-interpreter :program compiled)]
-    (interpreter/run-scan interp)
-    {:interpreter interp
-     :data-tables (interpreter/data-tables interp)}))

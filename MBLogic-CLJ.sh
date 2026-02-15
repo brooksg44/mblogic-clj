@@ -84,7 +84,7 @@ start_server() {
   echo ""
 
   # Build and start server
-  lein run -m mblogic-clj.server --port $PORT
+  lein run -m mblogic-clj.core $PORT
 }
 
 run_tests() {

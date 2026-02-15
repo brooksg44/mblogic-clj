@@ -1,0 +1,7 @@
+Warning: *instruction-set* not declared dynamic and thus is not dynamically rebindable, but its name suggests otherwise. Please either indicate ^:dynamic *instruction-set* or change the name. (mblogic_clj/instructions.clj:112)
+Syntax error reading source at (mblogic_clj/parser.clj:516:1).
+EOF while reading, starting at line 95
+
+Full report at:
+/var/folders/40/7syz0bpn7199r6c28bj5b6t00000gn/T/clojure-3567940720697102396.edn
+Subprocess failed (exit code: 1)
