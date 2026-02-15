@@ -296,9 +296,19 @@ function createWireElement(wireType = 'hbar') {
       g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, 0, LADDER.SYMBOL_WIDTH / 2, LADDER.SYMBOL_HEIGHT / 2));
       break;
     case 'branchttl':
-      // Top-left corner
+      // Top-left corner (┌) - horizontal right from center, vertical down from center
       g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, 0, LADDER.SYMBOL_WIDTH, 0));
       g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, 0, LADDER.SYMBOL_WIDTH / 2, LADDER.SYMBOL_HEIGHT / 2));
+      break;
+    case 'branchl':
+      // Bottom-left corner (└) - horizontal right from center, vertical up to center
+      g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, 0, LADDER.SYMBOL_WIDTH, 0));
+      g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, -LADDER.SYMBOL_HEIGHT / 2, LADDER.SYMBOL_WIDTH / 2, 0));
+      break;
+    case 'branchr':
+      // Bottom-right corner (┘) - horizontal left to center, vertical up to center
+      g.appendChild(createLine(0, 0, LADDER.SYMBOL_WIDTH / 2, 0));
+      g.appendChild(createLine(LADDER.SYMBOL_WIDTH / 2, -LADDER.SYMBOL_HEIGHT / 2, LADDER.SYMBOL_WIDTH / 2, 0));
       break;
   }
 
@@ -410,8 +420,8 @@ const SYMBOL_GENERATORS = {
   'branchtr': () => createWireElement('branchtr'),
   'branchttr': () => createWireElement('branchttr'),
   'branchttl': () => createWireElement('branchttl'),
-  'branchl': () => createWireElement('branchtl'),
-  'branchr': () => createWireElement('branchtr'),
+  'branchl': () => createWireElement('branchl'),
+  'branchr': () => createWireElement('branchr'),
   'brancht': () => createWireElement('hbar'),
   'branchx': () => createWireElement('hbar'),
 

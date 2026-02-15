@@ -525,7 +525,8 @@
    Matches Python PLCLadder.CloseBlock algorithm exactly:
    - Determines wideinstr flag (whether last non-nil cell in any row is not a branch)
    - Determines lastrow (last row with a non-nil last cell)
-   - Adds appropriate connectors per row based on current last cell
+   - Pass 1: add vbarl/branchtl connectors to each row
+   - Pass 2: replace top row connector with branchttl, bottom row with branchl
    Returns the modified matrix."
   [matrix]
   (let [height (matrix-height matrix)
@@ -541,60 +542,60 @@
                       last-cell
                       (assoc :lastrow i))))
                 {:wideinstr false :lastrow 0}
-                (range height))]
+                (range height))
 
-    ; Process each row to add left-side connectors
+        ; Pass 1: process each row to add left-side connectors (vbarl or branchtl)
+        pass1 (mapv (fn [i row]
+                      (let [last-cell (last row)]
+                        (cond
+                          ; Row is beyond lastrow with content
+                          (> i lastrow)
+                          (if wideinstr (conj row nil) row)
+
+                          ; Last cell is nil
+                          (nil? last-cell)
+                          (vec (concat (if wideinstr row (vec (butlast row)))
+                                       [(make-vbar-l-cell i (count row))]))
+
+                          ; Last cell is hbar
+                          (= (:symbol last-cell) HBAR)
+                          (if wideinstr
+                            (conj row (make-branch-tl-cell i (count row)))
+                            (vec (concat (vec (butlast row))
+                                         [(make-branch-tl-cell i (dec (count row)))])))
+
+                          ; Last cell is NOT a branch (instruction)
+                          (not (branch-symbol? (:symbol last-cell)))
+                          (if wideinstr
+                            (conj row (make-branch-tl-cell i (count row)))
+                            (vec (concat (vec (butlast row))
+                                         [(make-branch-tl-cell i (dec (count row)))])))
+
+                          ; Last cell is branchl - leave as is
+                          (= (:symbol last-cell) BRANCH_L)
+                          row
+
+                          ; Last cell is another branch symbol
+                          (branch-symbol? (:symbol last-cell))
+                          row
+
+                          ; Default
+                          :else
+                          (vec (concat (if wideinstr row (vec (butlast row)))
+                                       [(make-vbar-l-cell i (count row))])))))
+                    (range height)
+                    matrix)]
+
+    ; Pass 2: fix top row to branchttl and lastrow to branchl
     (mapv (fn [i row]
-            (let [last-cell (last row)]
-              (cond
-                ; Row is beyond lastrow with content
-                (> i lastrow)
-                (if wideinstr (conj row nil) row)
-
-                ; Last cell is nil
-                (nil? last-cell)
-                (vec (concat (if wideinstr row (vec (butlast row)))
-                             [(make-vbar-l-cell i (count row))]))
-
-                ; Last cell is hbar
-                (= (:symbol last-cell) HBAR)
-                (if wideinstr
-                  (conj row (make-branch-tl-cell i (count row)))
-                  (vec (concat (vec (butlast row))
-                               [(make-branch-tl-cell i (dec (count row)))])))
-
-                ; Last cell is NOT a branch (instruction)
-                (not (branch-symbol? (:symbol last-cell)))
-                (if wideinstr
-                  (conj row (make-branch-tl-cell i (count row)))
-                  (vec (concat (vec (butlast row))
-                               [(make-branch-tl-cell i (dec (count row)))])))
-
-                ; Last cell is branchl
-                (= (:symbol last-cell) BRANCH_L)
-                row
-
-                ; Last cell is another branch symbol
-                (branch-symbol? (:symbol last-cell))
-                row
-
-                ; Default
-                :else
-                (vec (concat (if wideinstr row (vec (butlast row)))
-                             [(make-vbar-l-cell i (count row))])))))
+            (if (or (zero? i) (= i lastrow))
+              (vec (concat (vec (butlast row))
+                           [(if (zero? i)
+                              (make-branch-ttl-cell i (dec (count row)))
+                              (make-branch-l-cell i (dec (count row))))]))
+              row))
           (range height)
-          matrix)
-
-    ; Add final corner connectors: branchttl at top, branchl at bottom
-    (let [result (vec (map-indexed (fn [i row]
-                                     (if (or (zero? i) (= i lastrow))
-                                       (vec (concat (vec (butlast row))
-                                                    [(if (zero? i)
-                                                       (make-branch-ttl-cell i (dec (count row)))
-                                                       (make-branch-l-cell i (dec (count row))))]))
-                                       row))
-                                   matrix))]
-      result)))
+          pass1)))
 
 (defn add-orstr-junction
   "Add junction connectors at the ORSTR merge point.
@@ -602,6 +603,7 @@
    This adds vertical connections between the bottom of the top section
    and the top of the bottom section at the rightmost column.
    Result: top-bottom-row gets branchtl (├), bottom-top-row gets branchr (┘)
+   Both updates are applied sequentially (not nested in if/else).
    Returns the modified matrix."
   [matrix top-height]
   (let [width (matrix-width matrix)
@@ -610,25 +612,27 @@
       (let [junction-col (dec width)
             top-bottom-row (dec top-height)
             bottom-top-row top-height
-            top-row (nth matrix top-bottom-row)
-            bottom-row (nth matrix bottom-top-row)]
-        ; Top section bottom row: convert to branchtl (├)
-        (if (and top-row (>= (count top-row) width))
-          (let [top-cell (nth top-row junction-col)]
-            (if top-cell
-              (assoc matrix top-bottom-row
-                     (assoc (vec top-row) junction-col
-                            (assoc top-cell :symbol BRANCH_TL)))
-              matrix))
-          ; Bottom section top row: convert to branchr (┘)
-          (if (and bottom-row (>= (count bottom-row) width))
-            (let [bottom-cell (nth bottom-row junction-col)]
-              (if bottom-cell
-                (assoc matrix bottom-top-row
-                       (assoc (vec bottom-row) junction-col
-                              (assoc bottom-cell :symbol BRANCH_R)))
-                matrix))
-            matrix)))
+            ; Step 1: update top section bottom row to branchtl (├)
+            m1 (let [top-row (nth matrix top-bottom-row)]
+                 (if (and top-row (>= (count top-row) width))
+                   (let [top-cell (nth top-row junction-col)]
+                     (if top-cell
+                       (assoc matrix top-bottom-row
+                              (assoc (vec top-row) junction-col
+                                     (assoc top-cell :symbol BRANCH_TL)))
+                       matrix))
+                   matrix))
+            ; Step 2: update bottom section top row to branchr (┘)
+            m2 (let [bottom-row (nth m1 bottom-top-row)]
+                 (if (and bottom-row (>= (count bottom-row) width))
+                   (let [bottom-cell (nth bottom-row junction-col)]
+                     (if bottom-cell
+                       (assoc m1 bottom-top-row
+                              (assoc (vec bottom-row) junction-col
+                                     (assoc bottom-cell :symbol BRANCH_R)))
+                       m1))
+                   m1))]
+        m2)
       matrix)))
 
 ;;; ============================================================
@@ -642,10 +646,22 @@
         params (:params instruction)
         first-addr (first params)]
     (cond
-      ; Contact instructions
+      ; Contact instructions - use :ladsymb from instruction-def for correct symbol
       (contact-instruction? opcode)
-      (let [negated? (str/includes? opcode "N")]
-        (make-contact-cell first-addr row 0 negated?))
+      (let [ladsymb (or (:ladsymb (:instruction-def instruction)) :contact-no)
+            contact-sym (case ladsymb
+                          :contact-nc "ncc"
+                          :contact-pd "nocpd"
+                          :contact-nd "nocnd"
+                          "noc")]
+        (make-ladder-cell
+          :type :contact
+          :symbol contact-sym
+          :address first-addr
+          :addresses (if first-addr [first-addr] [])
+          :row row
+          :col 0
+          :monitor-type :bool))
 
       ; Block/comparison instructions
       (block-instruction? opcode)
@@ -826,7 +842,8 @@
 
                 ; Output block instructions (TMR, CNTU, COPY, MATHDEC, etc.)
                 (output-block-instruction? opcode)
-                (let [svg-symbol (ladsymb-to-svg-symbol :compare opcode)
+                (let [ladsymb (or (:ladsymb (:instruction-def instr)) :compare)
+                      svg-symbol (ladsymb-to-svg-symbol ladsymb opcode)
                       addr-list (if params (vec params) [""])
                       cell (make-ladder-cell
                              :type :coil
