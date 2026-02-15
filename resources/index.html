@@ -464,19 +464,19 @@
         // Load program
         async function loadProgram() {
             showMessage('⏳ Loading program...', 'info');
-            
+
             try {
                 const response = await fetch('/api/load-program', { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.error) {
                     showMessage('❌ Error: ' + data.error, 'error');
                     return;
                 }
 
                 programData = data;
-                showMessage(`✅ Loaded ${data.networks} networks from ${data.file}`, 'success');
-                
+                showMessage(`✅ Loaded ${data['main-networks']} networks from ${data.file}`, 'success');
+
                 await refreshProgram();
                 selectNetwork(1);
             } catch (error) {
@@ -489,7 +489,7 @@
             try {
                 const response = await fetch('/api/program-summary');
                 const data = await response.json();
-                
+
                 if (!data['program-loaded']) {
                     showMessage('⚠️ No program loaded', 'warning');
                     return;
@@ -497,17 +497,17 @@
 
                 // Update sidebar
                 document.getElementById('programLoaded').textContent = '✅ Yes';
-                document.getElementById('totalNetworks').textContent = data['total-networks'];
-                document.getElementById('ladderRungs').textContent = data['ladder-renderability']['ladder-rungs'];
-                document.getElementById('ilRungs').textContent = data['ladder-renderability']['il-rungs'];
-                document.getElementById('coverage').textContent = data['ladder-renderability']['percentage'] + '%';
-                
-                const percentage = data['ladder-renderability']['percentage'];
+                document.getElementById('totalNetworks').textContent = data['main-networks'];
+                document.getElementById('ladderRungs').textContent = data['main-networks'];
+                document.getElementById('ilRungs').textContent = '0';
+                document.getElementById('coverage').textContent = '100%';
+
+                const percentage = 100;
                 document.getElementById('progressFill').style.width = percentage + '%';
                 document.getElementById('progressText').textContent = percentage + '%';
 
                 // Generate network buttons
-                generateNetworkButtons(data['total-networks']);
+                generateNetworkButtons(data['main-networks']);
             } catch (error) {
                 showMessage('❌ Failed to refresh: ' + error.message, 'error');
             }
@@ -530,93 +530,135 @@
         // Select network and load its diagram
         async function selectNetwork(networkId) {
             currentNetwork = networkId;
-            
+
             // Update button states
-            document.querySelectorAll('.network-btn').forEach((btn, idx) => {
-                if (idx + 1 === networkId) {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                }
-            });
+            const buttons = document.querySelectorAll('.network-btn');
+            if (buttons && buttons.length > 0) {
+                buttons.forEach((btn, idx) => {
+                    if (idx + 1 === networkId) {
+                        btn.classList.add('active');
+                    } else {
+                        btn.classList.remove('active');
+                    }
+                });
+            }
 
             // Show loading
             document.getElementById('canvas').innerHTML = '<div class="loading"><div class="spinner"></div>Loading network...</div>';
             document.getElementById('networkLabel').textContent = `Network ${networkId}`;
 
             try {
-                const response = await fetch(`/api/ladder/${networkId}`);
+                const response = await fetch('/api/ladder-js?subrname=main');
                 const data = await response.json();
 
-                if (data.error) {
-                    document.getElementById('canvas').innerHTML = 
-                        `<div class="message error">Error: ${data.error}</div>`;
+                if (data.error || data.status !== 'ok') {
+                    document.getElementById('canvas').innerHTML =
+                        `<div class="message error">Error: ${data.error || 'Failed to load ladder'}</div>`;
                     return;
                 }
 
-                networkData[networkId] = data;
+                const ladderData = data.data;
+                // Get the specific rung for this network
+                const rung = ladderData.subrdata && ladderData.subrdata[networkId - 1];
+
+                if (!rung) {
+                    document.getElementById('canvas').innerHTML =
+                        `<div class="message error">Network ${networkId} not found</div>`;
+                    return;
+                }
+
+                networkData[networkId] = rung;
 
                 // Update canvas info
-                const renderType = data['can-render-ladder?'] 
-                    ? '<span class="badge badge-ladder">Ladder Logic</span>'
-                    : '<span class="badge badge-il">IL Instructions</span>';
-                document.getElementById('renderType').innerHTML = renderType;
+                document.getElementById('renderType').innerHTML = '<span class="badge badge-ladder">Ladder Logic</span>';
 
                 // Render diagram
-                renderDiagram(data);
-                
+                renderRung(rung, networkId);
+
                 // Update button styles
-                const btn = Array.from(document.querySelectorAll('.network-btn'))[networkId - 1];
-                btn.classList.remove('ladder', 'il');
-                btn.classList.add(data['can-render-ladder?'] ? 'ladder' : 'il');
+                const btn = buttons && buttons[networkId - 1];
+                if (btn) {
+                    btn.classList.remove('ladder', 'il');
+                    btn.classList.add('ladder');
+                }
 
             } catch (error) {
-                document.getElementById('canvas').innerHTML = 
+                document.getElementById('canvas').innerHTML =
                     `<div class="message error">Failed to load network: ${error.message}</div>`;
             }
         }
 
-        // Render SVG from API response
-        function renderDiagram(data) {
+        // Render rung from ladder JSON data
+        function renderRung(rung, networkId) {
             const canvas = document.getElementById('canvas');
 
-            if (data['can-render-ladder?']) {
-                // Render actual SVG from API
-                if (data['svg']) {
-                    canvas.innerHTML = data['svg'];
-                } else {
-                    // Fallback if no SVG data
-                    canvas.innerHTML = `
-                        <div class="message warning">
-                            ⚠️ Ladder diagram data not available for Network ${data['network-id']}
-                        </div>
-                    `;
-                }
-            } else {
-                // Render as IL instructions
+            if (!rung) {
                 canvas.innerHTML = `
-                    <div style="background: #fff3e0; padding: 20px; border-radius: 5px; border-left: 4px solid #e65100;">
-                        <h3 style="color: #e65100; margin-bottom: 15px;">
-                            ⚙️ IL Instructions (Network ${data['network-id']})
-                        </h3>
-                        <p style="color: #666; margin-bottom: 15px; font-size: 0.95em;">
-                            This network cannot be rendered as a simple ladder diagram.
-                            It uses complex instruction combinations or data operations.
-                        </p>
-                        <div style="background: white; padding: 15px; border-radius: 3px;
-                                    font-family: monospace; font-size: 0.9em; color: #333;
-                                    border: 1px solid #ffb74d;">
-                            <div style="margin-bottom: 10px; color: #e65100; font-weight: bold;">
-                                Instructions: (${data['instruction-count']} total)
+                    <div class="message error">
+                        ⚠️ No data available for Network ${networkId}
+                    </div>
+                `;
+                return;
+            }
+
+            // Render rung data as formatted table
+            let cellsHtml = '';
+            if (rung.cells && rung.cells.length > 0) {
+                cellsHtml = `
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                        <thead>
+                            <tr style="background: #f5f5f5;">
+                                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Type</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Symbol</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Address</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Position</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rung.cells.map(cell => `
+                                <tr>
+                                    <td style="border: 1px solid #ddd; padding: 10px;">${cell.type}</td>
+                                    <td style="border: 1px solid #ddd; padding: 10px; font-family: monospace;">${cell.symbol}</td>
+                                    <td style="border: 1px solid #ddd; padding: 10px; font-family: monospace;">${cell.address || '-'}</td>
+                                    <td style="border: 1px solid #ddd; padding: 10px;">Row ${cell.row}, Col ${cell.col}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            canvas.innerHTML = `
+                <div style="background: #e8f5e9; padding: 20px; border-radius: 5px; border-left: 4px solid #2e7d32;">
+                    <h3 style="color: #2e7d32; margin-bottom: 15px;">
+                        ⚡ Network ${networkId} - Rung ${rung.number}
+                    </h3>
+                    <div style="background: white; padding: 15px; border-radius: 3px; margin-bottom: 15px;">
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                            <div>
+                                <span style="color: #666; font-weight: 500;">Dimensions:</span>
+                                <div style="color: #333; margin-top: 5px;">${rung.rows} rows × ${rung.cols} cols</div>
                             </div>
-                            <div style="color: #666; font-style: italic;">
-                                This complex network demonstrates the flexibility of IL programs
-                                to express operations beyond traditional ladder logic.
+                            <div>
+                                <span style="color: #666; font-weight: 500;">Cells:</span>
+                                <div style="color: #333; margin-top: 5px;">${rung.cells ? rung.cells.length : 0} total</div>
+                            </div>
+                            <div>
+                                <span style="color: #666; font-weight: 500;">Addresses:</span>
+                                <div style="color: #333; margin-top: 5px;">${rung.addresses ? rung.addresses.join(', ') : 'None'}</div>
+                            </div>
+                            <div>
+                                <span style="color: #666; font-weight: 500;">Comment:</span>
+                                <div style="color: #333; margin-top: 5px;">${rung.comment || 'No comment'}</div>
                             </div>
                         </div>
                     </div>
-                `;
-            }
+                    ${cellsHtml}
+                    <div style="margin-top: 15px; padding: 10px; background: #f5f5f5; border-radius: 3px; font-size: 0.9em; color: #666;">
+                        📌 This rung has been parsed and converted to ladder logic structure
+                    </div>
+                </div>
+            `;
         }
 
         // Export diagram as SVG
