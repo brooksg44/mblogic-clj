@@ -1,0 +1,42 @@
+# Leiningen
+target/
+classes/
+.lein-*
+.nrepl-port
+.lein-repl-history
+
+# ClojureScript
+resources/js/out/
+resources/js/out-release/
+resources/js/mblogic.js
+resources/js/mblogic.js.map
+
+# IDE
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.jar
+*.war
+*.ear
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Dependencies
+node_modules/
+pom.xml
+pom.xml.asc
+
+# Shadow CLJS
+.shadow-cljs/
+
+# REPL
+.clj-kondo/
+.clj-kondo/.cache/
