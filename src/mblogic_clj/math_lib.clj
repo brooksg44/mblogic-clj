@@ -33,7 +33,7 @@
               (recur (inc i) tokens' []))
 
             ;; Single-char operators and delimiters
-            (contains? #{'+' '-' '*' '/' '%' '^' '(' ')' ','} ch)
+            (contains? #{'+' '-' '*' \/ '%' '^' '(' ')' ','} ch)
             (let [tokens' (if (seq current-token)
                             (conj tokens (apply str current-token))
                             tokens)]

@@ -2,9 +2,11 @@
   "Web server implementation using Ring and Jetty.
    Provides HTTP endpoints for PLC control and monitoring."
   (:require [ring.adapter.jetty :as jetty]
-            [ring.util.response :refer [response status]]
             [cheshire.core :as json]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [clojure.string :as str]
+            [mblogic-clj.parser :as parser]
+            [mblogic-clj.ladder-renderer :as ladder]))
 
 ;;; ============================================================
 ;;; Global Server State
@@ -12,6 +14,8 @@
 
 (defonce ^:private server (atom nil))
 (defonce ^:private current-config (atom nil))
+(defonce ^:private current-program (atom nil))
+(defonce ^:private analyzed-networks (atom nil))
 
 ;;; ============================================================
 ;;; HTTP Handlers
@@ -32,13 +36,62 @@
   (json-response {:name "MBLogic-CLJ"
                   :version "1.0"
                   :description "PLC Compiler/Interpreter"
-                  :endpoints ["/health" "/api/status" "/api/data-table"]}))
+                  :endpoints {
+                    :health {:method "GET" :path "/health" :description "Health check"}
+                    :load-program {:method "POST" :path "/api/load-program" :description "Load IL program"}
+                    :program-summary {:method "GET" :path "/api/program-summary" :description "Get loaded program summary"}
+                    :ladder {:method "GET" :path "/api/ladder/{network-id}" :description "Render network as ladder diagram"}
+                  }}))
 
 (defn not-found-handler [req]
   "404 handler"
   (json-response {:error "Not found"
                   :path (:uri req)}
                  404))
+
+(defn load-program-handler [req]
+  "Load an IL program from the test directory"
+  (try
+    (let [source (slurp "test/plcprog.txt")
+          parsed (parser/parse-il-string source)]
+      (reset! current-program parsed)
+      (reset! analyzed-networks (ladder/analyze-program parsed))
+      (log/info "Program loaded successfully")
+      (json-response {:status "ok"
+                      :message "Program loaded"
+                      :networks (count @analyzed-networks)
+                      :file "test/plcprog.txt"}))
+    (catch Exception e
+      (log/error "Failed to load program:" (str e))
+      (json-response {:error (str e) :message "Failed to load program"} 500))))
+
+(defn program-summary-handler [req]
+  "Get summary of currently loaded program"
+  (if @current-program
+    (let [summary (ladder/render-program-summary @analyzed-networks)]
+      (json-response {:status "ok"
+                      :program-loaded true
+                      :total-networks (count @analyzed-networks)
+                      :ladder-renderability summary}))
+    (json-response {:status "ok" :program-loaded false :message "No program loaded"})))
+
+(defn ladder-renderer-handler [req]
+  "Render a specific network as a ladder diagram"
+  (if @current-program
+    (let [network-id (some-> (:uri req)
+                             (str/split #"/")
+                             last
+                             Integer/parseInt)]
+      (if-let [rung-analyses (get @analyzed-networks network-id)]
+        (let [can-render? (every? :can-render-ladder? rung-analyses)
+              rendered (ladder/render-network network-id rung-analyses)]
+          (json-response {:status "ok"
+                          :network-id network-id
+                          :can-render-ladder? can-render?
+                          :instruction-count (reduce + 0 (map :instruction-count rung-analyses))
+                          :svg-data (when rendered (str rendered))}))
+        (json-response {:error "Network not found"} 404)))
+    (json-response {:error "No program loaded"} 400)))
 
 ;;; ============================================================
 ;;; Router
@@ -51,7 +104,15 @@
     (case [method path]
       [:get "/"] (root-handler req)
       [:get "/health"] (health-handler req)
-      (not-found-handler req))))
+      [:post "/api/load-program"] (load-program-handler req)
+      [:get "/api/program-summary"] (program-summary-handler req)
+
+      ;; Ladder diagram rendering routes
+      (cond
+        (and (= method :get) (str/starts-with? path "/api/ladder/"))
+        (ladder-renderer-handler req)
+
+        :else (not-found-handler req)))))
 
 ;;; ============================================================
 ;;; Server Control
